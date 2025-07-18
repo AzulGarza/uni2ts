@@ -1,6 +1,6 @@
 # Disclaimer
 
-> This is a personal fork of [unit2ts](https://github.com/SalesforceAIResearch/uni2ts), maintained to support custom changes for [timecopilot](https://github.com/AzulGarza/TimeCopilot/) and publish pypi wheels at [`timecopilot-unit2ts`](https://pypi.org/project/timecopilot-unit2ts/). It may diverge from upstream.
+> This is a personal fork of [uni2ts](https://github.com/SalesforceAIResearch/uni2ts), maintained to support custom changes for [timecopilot](https://github.com/AzulGarza/TimeCopilot/) and publish pypi wheels at [`timecopilot-uni2ts`](https://pypi.org/project/timecopilot-uni2ts/). It may diverge from upstream.
 
 ## Credits
 
