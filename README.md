@@ -1,3 +1,12 @@
+# Disclaimer
+
+> This is a personal fork of [unit2ts](https://github.com/SalesforceAIResearch/uni2ts), maintained to support custom changes for [timecopilot](https://github.com/AzulGarza/TimeCopilot/) and publish pypi wheels at [`timecopilot-unit2ts`](https://pypi.org/project/timecopilot-unit2ts/). It may diverge from upstream.
+
+## Credits
+
+This project is a fork of by Original Author(s).  
+All credit for the original code belongs to them. This fork is maintained independently to support TimeCopilot-specific changes.
+
 <div align="center">
 
 # Unified Training of Universal Time Series Transformers
