@@ -3,10 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "uni2ts"
-dynamic = [
-  "version",
-]
+name = "timecopilot-uni2ts"
+version = "0.1.0"
 dependencies = [
   "torch>=2.1",
   "lightning>=2.0",
