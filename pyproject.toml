@@ -8,39 +8,24 @@ dynamic = [
   "version",
 ]
 dependencies = [
-  "torch>=2.1,<2.5",
+  "torch>=2.1",
   "lightning>=2.0",
-  "gluonts~=0.14.3",
-  "numpy~=1.26.0",
-  "scipy~=1.11.3",
+  "gluonts>=0.14.3",
+  "numpy>=1.16.0",
+  "scipy>=1.11.3",
   "einops==0.7.*",
   "jaxtyping~=0.2.24",
-  "python-dotenv==1.0.0",
-  "hydra-core==1.3",
+  "python-dotenv>=1.0.0",
+  "hydra-core>=1.3",
   "orjson",
   "tensorboard",
   "multiprocess",
   "huggingface_hub>=0.23.0",
   "safetensors",
-  "datasets~=2.17.1",
+  "datasets>=2.17.1",
   "jax[cpu]",
 ]
 requires-python = ">=3.10"
-authors = [
-  {name = "Gerald Woo", email = "gwoo@salesforce.com"},
-  {name = "Chenghao Liu", email = "chenghao.liu@salesforce.com"},
-  {name = "Juncheng Liu", email = "juncheng.liu@salesforce.com"},
-  {name = "Taha Aksu", email = "iaksu@salesforce.com"},
-  {name = "Xu Liu", email = "xu.liu@salesforce.com"},
-  {name = "Akshat Kumar"},
-  {name = "Caiming Xiong"},
-  {name = "Silvio Savarese"},
-  {name = "Doyen Sahoo"},
-]
-maintainers = [
-  {name = "Gerald Woo", email = "gwoo@salesforce.com"},
-  {name = "Juncheng Liu", email = "juncheng.liu@salesforce.com"}
-]
 description = "Unified Training of Universal Time Series Forecasting Transformers"
 readme = "README.md"
 license = {file = "LICENSE.txt"}
