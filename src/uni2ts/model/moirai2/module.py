@@ -14,19 +14,14 @@
 #  limitations under the License.
 
 from functools import partial
-from typing import Any, Mapping, Sequence
 
 import torch
 import torch.nn.functional as F
 from huggingface_hub import PyTorchModelHubMixin
-from hydra.utils import instantiate
 from jaxtyping import Bool, Float, Int
 from torch import nn
-from torch.distributions import Distribution
-from torch.utils._pytree import tree_map
 
-from uni2ts.common.torch_util import mask_fill, packed_attention_mask
-from uni2ts.distribution import DistributionOutput
+from uni2ts.common.torch_util import packed_causal_attention_mask
 from uni2ts.module.norm import RMSNorm
 from uni2ts.module.packed_scaler import PackedNOPScaler, PackedStdScaler
 from uni2ts.module.position import (
@@ -35,54 +30,12 @@ from uni2ts.module.position import (
     RotaryProjection,
 )
 from uni2ts.module.transformer import TransformerEncoder
-from uni2ts.module.ts_embed import MultiInSizeLinear
+from uni2ts.module.ts_embed import ResidualBlock
 
 
-def encode_distr_output(
-    distr_output: DistributionOutput,
-) -> dict[str, str | float | int]:
-    """Serialization function for DistributionOutput"""
-
-    def _encode(val):
-        if not isinstance(val, DistributionOutput):
-            return val
-
-        return {
-            "_target_": f"{val.__class__.__module__}.{val.__class__.__name__}",
-            **tree_map(_encode, val.__dict__),
-        }
-
-    return _encode(distr_output)
-
-
-SAFE_MODULE_PREFIXES = [
-    "uni2ts.distribution.",
-]
-
-
-def safe_target_check(obj: Any):
-    if isinstance(obj, Mapping):
-        if "_target_" in obj:
-            target = obj["_target_"]
-            if not any(target.startswith(prefix) for prefix in SAFE_MODULE_PREFIXES):
-                raise ValueError(f"Unsafe _target_ in distr_output config: {target!r}")
-        for v in obj.values():
-            safe_target_check(v)
-
-    elif isinstance(obj, Sequence) and not isinstance(obj, (str, bytes)):
-        for v in obj:
-            safe_target_check(v)
-
-
-def decode_distr_output(config: dict) -> DistributionOutput:
-    safe_target_check(config)
-    return instantiate(config, _convert_="all")
-
-
-class MoiraiModule(
+class Moirai2Module(
     nn.Module,
     PyTorchModelHubMixin,
-    coders={DistributionOutput: (encode_distr_output, decode_distr_output)},
 ):
     """
     Contains components of Moirai, to ensure implementation is identical across models.
@@ -91,37 +44,42 @@ class MoiraiModule(
 
     def __init__(
         self,
-        distr_output: DistributionOutput,
         d_model: int,
+        d_ff: int,
         num_layers: int,
-        patch_sizes: tuple[int, ...],  # tuple[int, ...] | list[int]
+        patch_size: int,
         max_seq_len: int,
         attn_dropout_p: float,
         dropout_p: float,
         scaling: bool = True,
+        num_predict_token: int = 1,
+        quantile_levels: tuple[float] = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
     ):
         """
-        :param distr_output: distribution output object
         :param d_model: model hidden dimensions
         :param num_layers: number of transformer layers
-        :param patch_sizes: sequence of patch sizes
+        :param patch_size: patch size
         :param max_seq_len: maximum sequence length for inputs
         :param attn_dropout_p: dropout probability for attention layers
         :param dropout_p: dropout probability for all other layers
         :param scaling: whether to apply scaling (standardization)
+        :param num_quantiles: number of quantile levels
         """
         super().__init__()
         self.d_model = d_model
         self.num_layers = num_layers
-        self.patch_sizes = patch_sizes
+        self.patch_size = patch_size
+        self.num_predict_token = num_predict_token
         self.max_seq_len = max_seq_len
         self.scaling = scaling
+        self.quantile_levels = quantile_levels
+        self.num_quantiles = len(quantile_levels)
 
-        self.mask_encoding = nn.Embedding(num_embeddings=1, embedding_dim=d_model)
         self.scaler = PackedStdScaler() if scaling else PackedNOPScaler()
-        self.in_proj = MultiInSizeLinear(
-            in_features_ls=patch_sizes,
-            out_features=d_model,
+        self.in_proj = ResidualBlock(
+            input_dims=patch_size * 2,
+            hidden_dims=d_model,
+            output_dims=d_model,
         )
         self.encoder = TransformerEncoder(
             d_model,
@@ -143,23 +101,26 @@ class MoiraiModule(
             ),
             shared_var_attn_bias=False,
             shared_time_qk_proj=True,
-            d_ff=None,
+            d_ff=d_ff,
         )
-        self.distr_output = distr_output
-        self.param_proj = self.distr_output.get_param_proj(d_model, patch_sizes)
+        self.out_proj = ResidualBlock(
+            input_dims=d_model,
+            hidden_dims=d_model,
+            output_dims=num_predict_token * self.num_quantiles * patch_size,
+        )
 
     def forward(
         self,
-        target: Float[torch.Tensor, "*batch seq_len max_patch"],
-        observed_mask: Bool[torch.Tensor, "*batch seq_len max_patch"],
+        target: Float[torch.Tensor, "*batch seq_len patch"],
+        observed_mask: Bool[torch.Tensor, "*batch seq_len patch"],
         sample_id: Int[torch.Tensor, "*batch seq_len"],
         time_id: Int[torch.Tensor, "*batch seq_len"],
         variate_id: Int[torch.Tensor, "*batch seq_len"],
         prediction_mask: Bool[torch.Tensor, "*batch seq_len"],
-        patch_size: Int[torch.Tensor, "*batch seq_len"],
-    ) -> Distribution:
+        training_mode: Bool = True,
+    ):
         """
-        Defines the forward pass of MoiraiModule.
+        Defines the forward pass of MoiraiDecoderModule.
         This method expects processed inputs.
 
         1. Apply scaling to observations
@@ -175,7 +136,7 @@ class MoiraiModule(
         :param time_id: indices indicating the time index
         :param variate_id: indices indicating the variate index
         :param prediction_mask: binary mask for prediction horizon, 1 if part of the horizon, 0 otherwise
-        :param patch_size: patch size for each token
+        :param training_mode: whether to use training mode (inference mode)
         :return: predictive distribution
         """
         loc, scale = self.scaler(
@@ -185,14 +146,19 @@ class MoiraiModule(
             variate_id,
         )
         scaled_target = (target - loc) / scale
-        reprs = self.in_proj(scaled_target, patch_size)
-        masked_reprs = mask_fill(reprs, prediction_mask, self.mask_encoding.weight)
+        input_tokens = torch.cat(
+            [scaled_target, observed_mask.to(torch.float32)], dim=-1
+        )
+        reprs = self.in_proj(input_tokens)
+
         reprs = self.encoder(
-            masked_reprs,
-            packed_attention_mask(sample_id),
+            reprs,
+            packed_causal_attention_mask(sample_id, time_id),
             time_id=time_id,
             var_id=variate_id,
         )
-        distr_param = self.param_proj(reprs, patch_size)
-        distr = self.distr_output.distribution(distr_param, loc=loc, scale=scale)
-        return distr
+        preds = self.out_proj(reprs)
+        if training_mode:
+            return preds, scaled_target
+        else:
+            return preds * scale + loc

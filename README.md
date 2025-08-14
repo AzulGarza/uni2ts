@@ -24,6 +24,10 @@ Uni2TS is a PyTorch based library for research and applications related to Time 
 Related reading: [Moirai Paper](https://arxiv.org/abs/2402.02592), [Moirai Salesforce Blog](https://blog.salesforceairesearch.com/moirai/), [Moirai-MoE Paper](https://arxiv.org/abs/2410.10469), [Moirai-MoE Salesforce Blog](https://www.salesforce.com/blog/time-series-morai-moe/), [Moirai-MoE AI Horizon Forecast Blog](https://aihorizonforecast.substack.com/p/moirai-moe-upgrading-moirai-with), [Moirai-MoE Jiqizhixin Blog](https://mp.weixin.qq.com/s/LQvlgxx9vU965Yzy6RuBfQ).
 ## 🎉 What's New
 
+* Aug 2025: Released [Moirai-2.0-R-small](https://huggingface.co/Salesforce/moirai-2.0-R-small).
+
+* Aug 2025: Enhanced the fine-tuning module and added [examples](./project/moirai-1/finetune_lsf) for running on LSF benchmark.
+
 * Nov 2024: The first general time series forecasting benchmark [GIFT-Eval](https://github.com/SalesforceAIResearch/gift-eval) is released. [Leaderboard](https://huggingface.co/spaces/Salesforce/GIFT-Eval) is available and please try your model on it!
 
 * Oct 2024: A new model Moirai-MoE! The preprint is available on [arXiv](https://arxiv.org/abs/2410.10469), along with the model weights of [Moirai-MoE-Small](https://huggingface.co/Salesforce/moirai-moe-1.0-R-small) and [Moirai-MoE-Base](https://huggingface.co/Salesforce/moirai-moe-1.0-R-base). Getting started with [inference code](https://github.com/SalesforceAIResearch/uni2ts/tree/main/project/moirai-moe-1) and [notebook examples](https://github.com/SalesforceAIResearch/uni2ts/tree/main/example)!
@@ -83,7 +87,7 @@ from uni2ts.eval_util.plot import plot_single
 from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
 from uni2ts.model.moirai_moe import MoiraiMoEForecast, MoiraiMoEModule
 
-MODEL = "moirai-moe"  # model name: choose from {'moirai', 'moirai-moe'}
+MODEL = "moirai2"  # model name: choose from {'moirai', 'moirai-moe', 'moirai2'}
 SIZE = "small"  # model size: choose from {'small', 'base', 'large'}
 PDT = 20  # prediction length: any positive integer
 CTX = 200  # context length: any positive integer
@@ -136,6 +140,17 @@ elif MODEL == "moirai-moe":
         feat_dynamic_real_dim=ds.num_feat_dynamic_real,
         past_feat_dynamic_real_dim=ds.num_past_feat_dynamic_real,
     )
+elif MODEL == "moirai2":
+    model = Moirai2Forecast(
+        module=Moirai2Module.from_pretrained(
+            f"Salesforce/moirai-2.0-R-small",
+        ),
+        prediction_length=100,
+        context_length=1680,
+        target_dim=1,
+        feat_dynamic_real_dim=0,
+        past_feat_dynamic_real_dim=0,
+    )
 
 predictor = model.create_predictor(batch_size=BSZ)
 forecasts = predictor.predict(test_data.input)
@@ -171,14 +186,14 @@ Firstly, let's see how to use Uni2TS to fine-tune a pre-trained model on your cu
 Uni2TS uses the [Hugging Face datasets library](https://github.com/huggingface/datasets) to handle data loading, and we first need to convert your dataset into the Uni2TS format. 
 If your dataset is a simple pandas DataFrame, we can easily process your dataset with the following script.
 We'll use the ETTh1 dataset from the popular [Long Sequence Forecasting benchmark](https://github.com/thuml/Time-Series-Library) for this example.
-For more complex use cases, see [this notebook](example/prepare_data.ipynb) for more in-depth examples on how to use your custom dataset with Uni2TS.
+For more complex use cases, see [this notebook](example/prepare_data.ipynb) for more in-depth examples on how to use your custom dataset with Uni2TS. For formal LSF finetuning experiments based on original configurations, see [this folder](./project/moirai-1) for shell scripts and more detailed examples.
 
 1. To begin the process, add the path to the directory where you want to save the processed dataset into the ```.env``` file.
 ```shell
 echo "CUSTOM_DATA_PATH=PATH_TO_SAVE" >> .env
 ```
 
-2. Run the following script to process the dataset into the required format. For the ```dataset_type``` option, we support `wide`, `long` and `wide_multivariate`.
+2. Run the following script to process the dataset into the required format. For the ```dataset_type``` option, we support `wide`, `long` and `wide_multivariate`. 
 ```shell
 python -m uni2ts.data.builder.simple ETTh1 dataset/ETT-small/ETTh1.csv --dataset_type wide
 ```
@@ -190,14 +205,33 @@ The validation set will be saved as DATASET_NAME_eval.
 python -m uni2ts.data.builder.simple ETTh1 dataset/ETT-small/ETTh1.csv --date_offset '2017-10-23 23:00:00'
 ```
 
-3. Finally, we can simply run the fine-tuning script with the appropriate [training](cli/conf/finetune/data/etth1.yaml) and [validation](cli/conf/finetune/val_data/etth1.yaml) data configuration files.
+In some cases, we may want to normalize the data using the mean and std computed from the training dataset. This can be achieved by setting the ```--normalize``` argument.
+
+```shell
+python -m uni2ts.data.builder.simple ETTh1 dataset/ETT-small/ETTh1.csv --date_offset '2017-10-23 23:00:00' --normalize
+```
+
+
+3. Finally, we can simply run the fine-tuning script with the appropriate [training](cli/conf/finetune/data/etth1.yaml) and [validation](cli/conf/finetune/val_data/etth1.yaml) data configuration files. Forecasting configurations such as patch size, context length and prediction length need to be specified by users.  Since ```dataset_type``` is ```wide```, ```data.mode``` is set to `S` for univariate setup.
 ```shell
 python -m cli.train \
   -cp conf/finetune \
-  run_name=example_run \ 
-  model=moirai_1.0_R_small \ 
-  data=etth1 \ 
-  val_data=etth1  
+  exp_name=example_lsf \
+  run_name=example_run \
+  model=moirai_1.0_R_small \
+  model.patch_size=32 \
+  model.context_length=1000 \
+  model.prediction_length=96 \
+  data=etth1 \
+  data.patch_size=32 \
+  data.context_length=1000 \
+  data.prediction_length=96 \
+  data.mode=S \
+  val_data=etth1 \
+  val_data.patch_size=32 \
+  val_data.context_length=1000 \
+  val_data.prediction_length=96 \
+  val_data.mode=S
 ```
 
 ### Evaluation
